@@ -1,0 +1,143 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import random
+from dql_agent import Agent
+from scheduler import TaskSchedulerEnv
+
+# --- 1. CONFIGURATION ---
+NUM_STEPS = 200
+SCENARIO_SEQUENCE = (
+    ['io'] * 60 +      # Phase 1: Heavy IO (Needs High N)
+    ['cpu'] * 60 +     # Phase 2: Heavy CPU (Needs Low N)
+    ['spike'] * 20 +   # Phase 3: Sudden Spike
+    ['mixed'] * 60     # Phase 4: Chaos
+)
+
+def run_simulation(agent=None, static_n=None):
+    """
+    Runs the simulation. 
+    If agent is provided -> Uses AI.
+    If static_n is provided -> Uses fixed pool size.
+    """
+    env = TaskSchedulerEnv()
+    
+    # CRITICAL: Fix seed so both "racers" get the exact same tasks
+    random.seed(42) 
+    np.random.seed(42)
+    
+    state = env.reset()
+    if static_n:
+        env.current_n = static_n
+
+    history = {
+        'throughput': [],
+        'queue_size': [],
+        'n_workers': [],
+        'cumulative_tasks': []
+    }
+    
+    total_completed = 0
+
+    for i in range(NUM_STEPS):
+        scenario = SCENARIO_SEQUENCE[i] if i < len(SCENARIO_SEQUENCE) else 'mixed'
+        
+        if agent:
+            # AI decides action
+            action = agent.select_action(state, is_training=False)
+        else:
+            # Static decides action (Action 1 = Hold/Do Nothing)
+            action = 1 
+            env.current_n = static_n # Force reset in case logic drifts
+
+        next_state, reward = env.step(action, scenario)
+        state = next_state
+        
+        # Metrics: [Queue, CPU, Wait, Service, Throughput, N]
+        throughput = state[4]
+        queue = state[0]
+        n = state[5]
+        
+        # Estimate tasks completed this step (Throughput * Time)
+        tasks_done_step = throughput * 0.1 
+        total_completed += tasks_done_step
+
+        history['throughput'].append(throughput)
+        history['queue_size'].append(queue)
+        history['n_workers'].append(n)
+        history['cumulative_tasks'].append(total_completed)
+
+    return history
+
+# --- 2. TRAIN (Or Load) THE AGENT ---
+print("Training Agent (Fast Mode)...")
+env = TaskSchedulerEnv()
+agent = Agent(env.state_dim, env.action_dim)
+
+# Quick training loop (increase episodes for better results)
+for e in range(50):
+    state = env.reset()
+    for _ in range(100):
+        action = agent.select_action(state)
+        next_state, reward = env.step(action, 'mixed')
+        agent.store_transition(state, action, reward, next_state)
+        agent.learn()
+        state = next_state
+    agent.update_target_network()
+
+print("Training Complete. Starting Race...")
+
+# --- 3. THE RACE ---
+# Run 1: Static Baseline (N=10)
+static_results = run_simulation(static_n=10)
+
+# Run 2: DQL Agent
+dql_results = run_simulation(agent=agent)
+
+# --- 4. PLOTTING THE TRUTH ---
+fig, axes = plt.subplots(3, 1, figsize=(12, 12), sharex=True)
+steps = range(NUM_STEPS)
+
+# Plot A: The Race (Cumulative Tasks)
+# This is the most important line. Who finished more work?
+ax = axes[0]
+ax.plot(steps, static_results['cumulative_tasks'], color='red', linestyle='--', label='Static (N=10)')
+ax.plot(steps, dql_results['cumulative_tasks'], color='blue', linewidth=2, label='DQL Agent')
+ax.set_ylabel('Total Tasks Completed')
+ax.set_title('Metric 1: Productivity (Higher is Better)')
+ax.legend()
+ax.grid(True, alpha=0.3)
+
+# Plot B: Queue Size (Latency)
+# This shows who is drowning in work.
+ax = axes[1]
+ax.plot(steps, static_results['queue_size'], color='red', linestyle='--', label='Static Queue')
+ax.plot(steps, dql_results['queue_size'], color='blue', linewidth=1.5, label='DQL Queue')
+ax.fill_between(steps, static_results['queue_size'], dql_results['queue_size'], where=(np.array(static_results['queue_size']) > np.array(dql_results['queue_size'])), interpolate=True, color='blue', alpha=0.1, label='DQL Win Margin')
+ax.set_ylabel('Pending Tasks (Queue)')
+ax.set_title('Metric 2: Latency/Backlog (Lower is Better)')
+ax.legend()
+ax.grid(True, alpha=0.3)
+
+# Plot C: The Behavior (N count)
+# This explains WHY the AI won.
+ax = axes[2]
+ax.plot(steps, static_results['n_workers'], color='red', linestyle='--', label='Static N')
+ax.plot(steps, dql_results['n_workers'], color='green', linewidth=2, label='DQL Adaptive N')
+
+ax.set_ylabel('Thread Pool Size')
+ax.set_xlabel('Time Steps')
+ax.set_title('Metric 3: Agent Behavior (Adaptability)')
+
+
+# Annotate the phases
+ax.axvline(x=60, color='k', linestyle=':', alpha=0.5)
+ax.text(30, 50, "Phase 1: I/O Bound\n(Needs High N)", ha='center', fontsize=8)
+ax.axvline(x=120, color='k', linestyle=':', alpha=0.5)
+ax.text(90, 50, "Phase 2: CPU Bound\n(Needs Low N)", ha='center', fontsize=8)
+
+ax.legend()
+ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig('head_to_head_comparison.png')
+plt.show()
