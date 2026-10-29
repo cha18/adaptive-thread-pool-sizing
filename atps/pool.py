@@ -25,8 +25,8 @@ class AdaptiveThreadPoolExecutor(Executor):
             return self._live_threads - self._pills_queued
 
     def resize(self, new_size):
-        if self._shutdown: return
         with self._lock:
+            if self._shutdown: return
             new_size = max(min(self._max_workers, new_size), 1)
             current_size = self._live_threads - self._pills_queued #num_workers is calculated manually without num_workers() since resize already holds the lock, so running num_workers() will cause a deadlock
             # a method that holds the lock must never call another method that takes the same lock - it will cause a deadlock
