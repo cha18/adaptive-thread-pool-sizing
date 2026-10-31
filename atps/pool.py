@@ -3,11 +3,12 @@ import queue
 from concurrent.futures import Executor
 from collections.abc import Callable
 import threading
+from atps.stats import Stats, TaskTiming
 
 _STOP = object()
 
 class AdaptiveThreadPoolExecutor(Executor):
-    def __init__(self, initial_workers, max_workers=64):
+    def __init__(self, initial_workers, max_workers=64, stats=None):
         if initial_workers > max_workers or initial_workers < 1: raise ValueError("initial_workers must be between 1 and max_workers")
         self._max_workers = max_workers
         self._work_queue = queue.Queue()
@@ -15,6 +16,7 @@ class AdaptiveThreadPoolExecutor(Executor):
         self._pills_queued = 0
         self._shutdown = False
         self._threads: set[threading.Thread] = set()
+        self.stats = stats if stats is not None else Stats()
 
         self._lock = threading.Lock()
         self.resize(initial_workers)
@@ -24,12 +26,19 @@ class AdaptiveThreadPoolExecutor(Executor):
         with self._lock:
             return self._live_threads - self._pills_queued
 
+    @property
+    def queue_length(self):
+        with self._lock:
+            return self._work_queue.qsize() - self._pills_queued
+
     def resize(self, new_size):
         with self._lock:
             if self._shutdown: return
             new_size = max(min(self._max_workers, new_size), 1)
             current_size = self._live_threads - self._pills_queued #num_workers is calculated manually without num_workers() since resize already holds the lock, so running num_workers() will cause a deadlock
             # a method that holds the lock must never call another method that takes the same lock - it will cause a deadlock
+            if new_size == current_size: return
+            self.stats.record_size(new_size)
             if new_size < current_size:
                 for _ in range(current_size-new_size):
                     self._work_queue.put(_STOP)
@@ -45,14 +54,16 @@ class AdaptiveThreadPoolExecutor(Executor):
         with self._lock:
             if self._shutdown:
                 raise RuntimeError("cannot submit to queue, workers are shutting down")
+            submit_timestamp = self.stats.record_submit()
             future  = Future()
-            self._work_queue.put((future, fn, args, kwargs))
+            self._work_queue.put((future, fn, args, kwargs, submit_timestamp))
         return future
 
     def shutdown(self, wait=True, *, cancel_futures=False) -> None:
         if cancel_futures: raise NotImplementedError("cancel futures is not supported")
         with self._lock:
             self._shutdown = True
+            self.stats.record_size(0)
             current_size = self._live_threads - self._pills_queued #same deadlock prevention mechanism as in resize()
             for _ in range(current_size):
                 self._work_queue.put(_STOP)
@@ -73,11 +84,16 @@ class AdaptiveThreadPoolExecutor(Executor):
                     self._pills_queued -= 1
                 return
             else:
-                future, fn, args, kwargs = item
+                start_timestamp = self.stats.now()
+                future, fn, args, kwargs, submit_timestamp = item
                 if not future.set_running_or_notify_cancel(): continue
                 try:
                     result = fn(*args, **kwargs)
                 except BaseException as e:
+                    finish_timestamp = self.stats.now()
+                    self.stats.record_done(TaskTiming(submit_timestamp, start_timestamp, finish_timestamp))
                     future.set_exception(e)
                 else:
+                    finish_timestamp = self.stats.now()
+                    self.stats.record_done(TaskTiming(submit_timestamp, start_timestamp, finish_timestamp))
                     future.set_result(result)

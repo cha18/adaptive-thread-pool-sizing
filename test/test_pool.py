@@ -48,7 +48,7 @@ def test_shrink_retires_idle_workers():
     with AdaptiveThreadPoolExecutor(initial_workers=10) as pool:
         pool.resize(4)
         assert pool.num_workers == 4
-        assert wait_until(lambda: threading.active_count() <= 1 + 4)
+        assert wait_until(lambda: threading.active_count() <= 1 + 4) #the 1 is referring to the main thread
 
 def test_shrink_never_interrupts_a_running_task():
     with AdaptiveThreadPoolExecutor(initial_workers=2) as pool:
@@ -56,7 +56,7 @@ def test_shrink_never_interrupts_a_running_task():
         time.sleep(0.05)
         pool.resize(1)
         for f in running:
-            assert f.result(timeout=2) is None
+            assert f.result(timeout=2) is None #if interrupted it would raise CancelledError
 
 def test_resize_is_clamped_to_one_and_max():
     with AdaptiveThreadPoolExecutor(initial_workers=2, max_workers=8) as pool:
@@ -74,14 +74,14 @@ def test_grow_while_pills_are_still_queued():
         assert pool.num_workers == 3
         for f in blockers:
             f.result(timeout=3)
-        assert wait_until(lambda: threading.active_count() == 1+3)
+        assert wait_until(lambda: threading.active_count() == 1+3) #the 1 is referring to the main thread
 
 def test_submit_after_shutdown_raises():
     pool = AdaptiveThreadPoolExecutor(initial_workers=2)
     pool.shutdown()
     with pytest.raises(RuntimeError):
         pool.submit(time.sleep, 0.3)
-    assert wait_until(lambda: threading.active_count() == 1)
+    assert wait_until(lambda: threading.active_count() == 1) #only main thread alive
 
 def test_shutdown_waits_for_queued_work():
     pool = AdaptiveThreadPoolExecutor(initial_workers=2)
