@@ -1,4 +1,3 @@
-from decimal import IEEE_CONTEXT_MAX_BITS
 import time
 import pytest
 from atps.pool import AdaptiveThreadPoolExecutor
@@ -132,3 +131,11 @@ def test_pool_logs_every_resize():
         pool.resize(3)
         pool.resize(3) #this should not be logged since resize() is meant to return if old and new times are equal
         assert [n for _,n in pool.stats.sizes] == [2,4,8,3]
+
+
+def test_snapshot_reports_threads_alive():
+    stats = Stats()
+    assert stats.snapshot().live_threads is None
+    stats.record_live(3)
+    stats.record_live(5)
+    assert stats.snapshot().live_threads == 5

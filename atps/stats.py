@@ -11,6 +11,7 @@ class Snapshot:
     completed: int
     mean_service: float | None
     p95_latency: float | None
+    live_threads: int | None = None  # threads actually alive, including ones still working towards a pill
 
 @dataclass(frozen=True)
 class TaskTiming:
@@ -40,6 +41,7 @@ class Stats:
         self._submit_timestamps = []
         self._finished_timings = []
         self._size_changes = []
+        self._live_changes = []
 
     @property
     def timings(self):
@@ -50,6 +52,12 @@ class Stats:
     def sizes(self):
         with self._lock:
             return list(self._size_changes)
+
+    @property
+    def live(self):
+        """[(time, threads alive)]: unlike sizes, a retiring thread counts until it actually exits."""
+        with self._lock:
+            return list(self._live_changes)
 
     def now(self):
         return self._clock()
@@ -68,6 +76,10 @@ class Stats:
         with self._lock:
             self._size_changes.append((self.now(), n))
 
+    def record_live(self, n):
+        with self._lock:
+            self._live_changes.append((self.now(), n))
+
     def snapshot(self, window=1.0):
         with self._lock:
             cutoff = self.now()-window
@@ -76,7 +88,8 @@ class Stats:
             completed = len(recent_tasks)
             mean_service = sum([t.service for t in recent_tasks])/completed if completed>0 else None
             p95_latency = percentile([t.latency for t in recent_tasks], 95) if completed>0 else None
-            return Snapshot(arrival_rate, completed, mean_service, p95_latency)
+            live_threads = self._live_changes[-1][1] if self._live_changes else None
+            return Snapshot(arrival_rate, completed, mean_service, p95_latency, live_threads)
 
 def percentile(values: list, p):
     if not values:

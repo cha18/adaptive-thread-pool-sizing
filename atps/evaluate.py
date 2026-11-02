@@ -55,12 +55,13 @@ def run_one(tasks, controller, initial_workers, interval=0.1):
             f.result()
         timings = pool.stats.timings
         sizes = pool.stats.sizes  # read before shutdown, which logs a final 0
+        live = pool.stats.live    # threads actually alive: what the pool really costs
     finally:
         pool.shutdown()
 
     end = max(t.finished for t in timings)
     latencies = [t.latency for t in timings]
-    avg = average_threads(sizes, t0, end)
+    avg = average_threads(live, t0, end)
     return {
         "tasks": len(timings),
         "p50": percentile(latencies, 50),
@@ -69,8 +70,10 @@ def run_one(tasks, controller, initial_workers, interval=0.1):
         "mean_wait": sum(t.wait for t in timings) / len(timings),
         "makespan": end - t0,
         "avg_threads": avg,
-        "max_threads": max(n for t, n in sizes if t <= end),
+        "max_threads": max(n for t, n in live if t <= end),
         "thread_seconds": avg * (end - t0),
+        "size_log": [(t - t0, n) for t, n in sizes],  # for plots; not written to the CSV
+        "live_log": [(t - t0, n) for t, n in live],
     }
 
 
@@ -86,7 +89,7 @@ def main():
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDS)
+        writer = csv.DictWriter(f, fieldnames=FIELDS, extrasaction="ignore")
         writer.writeheader()
         for seed in range(args.seeds):
             for scenario in args.scenarios:

@@ -77,3 +77,10 @@ def test_threads_above_the_littles_law_target_cost_something():
 def test_reward_is_finite_when_there_is_no_data():
     r = reward(snap(arrival_rate=0.0, mean_service=None, p95=None), num_workers=1, queue_length=0)
     assert math.isfinite(r)
+
+
+def test_reward_charges_for_threads_still_alive_not_just_the_target():
+    # the pool says 8, but 20 threads are still working towards their pills
+    honest = Snapshot(arrival_rate=30.0, completed=10, mean_service=0.1, p95_latency=0.2, live_threads=8)
+    hidden = Snapshot(arrival_rate=30.0, completed=10, mean_service=0.1, p95_latency=0.2, live_threads=20)
+    assert reward(hidden, 8, 0) < reward(honest, 8, 0)

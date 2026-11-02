@@ -55,6 +55,7 @@ class AdaptiveThreadPoolExecutor(Executor):
                     self._threads.add(thread)
                     thread.start()
                     self._live_threads += 1
+                    self.stats.record_live(self._live_threads)
 
     def submit(self, fn: Callable, /, *args, **kwargs) -> Future:
         with self._lock:
@@ -89,6 +90,7 @@ class AdaptiveThreadPoolExecutor(Executor):
                 with self._lock:
                     self._threads.remove(threading.current_thread())
                     self._live_threads -= 1
+                    self.stats.record_live(self._live_threads)
                     self._pills_queued -= 1
                 return
             else:

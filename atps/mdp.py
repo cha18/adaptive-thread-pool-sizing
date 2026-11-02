@@ -35,11 +35,18 @@ def state(snapshot: Snapshot, num_workers: int, queue_length: int) -> list[float
         min(queue_length, 1000) / 100,         # 0..10; capped so one huge backlog can't swamp the rest
         float(snapshot.p95_latency or 0.0),    # seconds, ~0.1..6; None (nothing finished yet) → 0
         snapshot.arrival_rate * (snapshot.mean_service or 0.0) / MAX_WORKERS,  # λW: threads needed, 0..~1
+        _alive(snapshot, num_workers) / MAX_WORKERS,  # includes retiring threads still finishing queued work
     ]
+
+
+def _alive(snapshot: Snapshot, num_workers: int) -> int:
+    """Threads actually running. num_workers stops counting a thread the moment its pill is queued,
+    but during a burst that thread keeps working until it reaches the pill, so it still costs."""
+    return num_workers if snapshot.live_threads is None else snapshot.live_threads
 
 
 def reward(snapshot: Snapshot, num_workers: int, queue_length: int) -> float:
     """Higher is better: penalise p95 latency and threads above what Little's Law says is needed."""
     latency_cost = snapshot.p95_latency or 0.0   # None: nothing finished in the window, so no latency observed
-    excess_threads = max(0, num_workers - littles_law_target(snapshot))
+    excess_threads = max(0, _alive(snapshot, num_workers) - littles_law_target(snapshot))
     return -latency_cost - THREAD_COST * excess_threads

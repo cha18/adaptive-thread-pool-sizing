@@ -88,3 +88,17 @@ def test_shutdown_waits_for_queued_work():
     running = [pool.submit(time.sleep, 0.3) for _ in range(6)]
     pool.shutdown()
     for future in running: assert future.done()
+
+
+def test_a_retiring_thread_counts_as_alive_until_it_reaches_its_pill():
+    with AdaptiveThreadPoolExecutor(initial_workers=4) as pool:
+        futures = [pool.submit(time.sleep, 0.2) for _ in range(8)]   # 4 running, 4 queued
+        pool.resize(2)                                              # 2 pills go behind the queued tasks
+        assert pool.num_workers == 2
+        assert pool.stats.live[-1][1] == 4                          # nobody has exited yet
+        for f in futures:
+            f.result()
+        deadline = time.monotonic() + 2
+        while pool.stats.live[-1][1] != 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert pool.stats.live[-1][1] == 2
