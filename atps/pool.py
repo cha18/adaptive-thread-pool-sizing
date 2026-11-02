@@ -4,11 +4,12 @@ from concurrent.futures import Executor
 from collections.abc import Callable
 import threading
 from atps.stats import Stats, TaskTiming
+from atps.loop import ControlLoop
 
 _STOP = object()
 
 class AdaptiveThreadPoolExecutor(Executor):
-    def __init__(self, initial_workers, max_workers=64, stats=None):
+    def __init__(self, initial_workers, max_workers=64, stats=None, controller=None, interval=0.1):
         if initial_workers > max_workers or initial_workers < 1: raise ValueError("initial_workers must be between 1 and max_workers")
         self._max_workers = max_workers
         self._work_queue = queue.Queue()
@@ -20,6 +21,11 @@ class AdaptiveThreadPoolExecutor(Executor):
 
         self._lock = threading.Lock()
         self.resize(initial_workers)
+
+        self._loop = None
+        if controller is not None:
+            self._loop = ControlLoop(self, controller, interval)
+            self._loop.start()
 
     @property
     def num_workers(self):
@@ -61,6 +67,8 @@ class AdaptiveThreadPoolExecutor(Executor):
 
     def shutdown(self, wait=True, *, cancel_futures=False) -> None:
         if cancel_futures: raise NotImplementedError("cancel futures is not supported")
+        if self._loop is not None:
+            self._loop.stop() #stop the loop before taking the lock: a tick may be waiting on the lock inside resize()
         with self._lock:
             self._shutdown = True
             self.stats.record_size(0)
