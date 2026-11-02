@@ -8,12 +8,21 @@ from atps.pool import AdaptiveThreadPoolExecutor
 from atps.stats import percentile
 from atps.workloads import SCENARIOS, generate
 
+MODEL_PATH = "models/dqn.pt"
+
+
+def _load_dqn():
+    from atps.dqn import DQNController  # imported here so the other controllers don't need torch
+    return DQNController.load(MODEL_PATH)
+
+
 # name → (controller factory, initial workers)
 CONTROLLERS = {
     "fixed-4":      (lambda: FixedController(4), 4),
     "fixed-16":     (lambda: FixedController(16), 16),
     "rule":         (lambda: RuleController(use_queue=True), 2),
     "rule-noqueue": (lambda: RuleController(use_queue=False), 2),
+    "dqn":          (_load_dqn, 2),
 }
 
 FIELDS = ["scenario", "controller", "seed", "tasks", "p50", "p95", "p99",
@@ -69,7 +78,8 @@ def main():
     parser = argparse.ArgumentParser(description="Run every controller on every scenario and write a CSV.")
     parser.add_argument("--seeds", type=int, default=1)
     parser.add_argument("--scenarios", nargs="*", default=list(SCENARIOS))
-    parser.add_argument("--controllers", nargs="*", default=list(CONTROLLERS))
+    default = [c for c in CONTROLLERS if c != "dqn" or Path(MODEL_PATH).exists()]
+    parser.add_argument("--controllers", nargs="*", default=default)
     parser.add_argument("--out", default="results/eval.csv")
     args = parser.parse_args()
 
@@ -88,7 +98,7 @@ def main():
                     writer.writerow(row)
                     f.flush()
                     print(f"{scenario:8} {name:13} seed={seed}  p95={row['p95']:.3f}s  "
-                          f"avg_threads={row['avg_threads']:.1f}  makespan={row['makespan']:.2f}s")
+                          f"avg_threads={row['avg_threads']:.1f}  makespan={row['makespan']:.2f}s", flush=True)
 
 
 if __name__ == "__main__":
